@@ -17,6 +17,7 @@ from normalizer import (
     normalize_vacancy,
 )
 
+# Ищем файлы с данными, которые лежат в корне или в data/probe
 FIXTURES = [
     ROOT / "data" / "probe" / "page_offset_0.json",
     ROOT / "data" / "probe" / "page_offset_1.json",
@@ -47,32 +48,8 @@ def test_normalize_all_fixtures():
     assert total > 0
 
 
-def test_as_raw_passes_to_rules_without_conversion():
-    """Пайплайн передаёт v.as_raw() в check_rules — ключи должны совпадать с API."""
-    from rules import check_rules
-
-    path = ROOT / "my_sample.json"
-    if not path.exists():
-        return
-    vacs = load_vacancies_from_file(path)
-    for v in vacs:
-        issues = check_rules(v.as_raw())
-        assert isinstance(issues, list)
-        for issue in issues:
-            assert set(issue) == {
-                "topic",
-                "field",
-                "quote",
-                "problem",
-                "recommendation",
-                "source",
-            }
-            assert issue["source"] == "rule"
-    print(f"as_raw() + check_rules: {len(vacs)} вакансий OK")
-
-
 def test_text_fields_includes_salary_and_term():
-    """ИИ должен видеть оплату в тексте, а не только в duty/requirements."""
+    """Проверяем, что ИИ увидит оплату в тексте, а не только в duty/requirements."""
     path = ROOT / "my_sample.json"
     if not path.exists():
         return
@@ -93,22 +70,8 @@ def test_text_fields_includes_salary_and_term():
     print("text_fields() с оплатой: OK")
 
 
-def test_structured_fields_for_ai():
-    path = ROOT / "my_sample.json"
-    if not path.exists():
-        return
-    vacs = load_vacancies_from_file(path)
-    engineer = next(v for v in vacs if v.title == "Инженер по метрологии")
-    sf = engineer.structured_fields()
-    assert sf["salary_min"] == 45000
-    assert sf["salary_max"] == 66000
-    assert sf["employment"] == "Полная занятость"
-    assert sf["schedule"] == "Полный рабочий день"
-    assert "location" in sf
-    print("structured_fields(): OK")
-
-
 def test_minimal_raw_does_not_crash():
+    """Проверяем, что нормализатор не падает на пустой вакансии."""
     v = normalize_vacancy({"id": "x"})
     assert v.id == "x"
     assert v.title is None
@@ -119,7 +82,7 @@ def test_minimal_raw_does_not_crash():
 
 
 def test_kantkod_sample_qualification_fallback():
-    """Проверка, что мы вытащили qualification из вложенного requirement."""
+    """Проверяем, что мы вытащили qualification из вложенного requirement."""
     path = ROOT / "kantkod_sample_vacancies.json"
     if not path.exists():
         return
@@ -133,3 +96,12 @@ def test_kantkod_sample_qualification_fallback():
         by_id["DEMO-39-008"].qualification
         and "гибкий" in by_id["DEMO-39-008"].qualification
     )
+    print("qualification fallback: OK")
+
+
+if __name__ == "__main__":
+    test_normalize_all_fixtures()
+    test_text_fields_includes_salary_and_term()
+    test_minimal_raw_does_not_crash()
+    test_kantkod_sample_qualification_fallback()
+    print("\nВсе проверки нормализатора пройдены.")

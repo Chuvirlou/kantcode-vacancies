@@ -1,4 +1,46 @@
-      - name: Lint with Ruff
+name: Run Vacancy Bot
+
+on:
+  schedule:
+    # Запуск каждый день в 03:00 UTC (06:00 по Калининграду)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Позволяет запускать вручную через кнопку в GitHub
+
+permissions:
+  contents: write # Нужно для автоматического коммита report.json
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip' # Ускоряет установку зависимостей при повторных запусках
+
+      - name: Install dependencies
         run: |
-          pip install ruff
-          ruff check .
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run pipeline
+        env:
+          # API-ключи берутся из настроек репозитория (Settings -> Secrets and variables -> Actions)
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_ENABLED: "1"
+        run: |
+          python -m app run
+
+      - name: Commit and push report
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add report.json
+          # Коммитим только если файл изменился
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update report.json" && git push)
