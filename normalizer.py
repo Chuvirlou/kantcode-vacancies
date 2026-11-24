@@ -54,6 +54,11 @@ def normalize_vacancy(raw: dict) -> Vacancy:
     req = raw.get("requirement") or {}
     if not isinstance(req, dict):
         req = {}
+        # --- НАЧАЛО ПРАВКИ ---
+    # Обогащаем сырой словарь, чтобы rules.py видел вложенные поля
+    if req.get("qualification") and not raw.get("qualification"):
+        raw["qualification"] = req.get("qualification")
+    # --- КОНЕЦ ПРАВКИ ---
 
     return Vacancy(
         id=_to_str(raw.get("id")) or "",
