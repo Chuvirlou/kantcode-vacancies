@@ -8,13 +8,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Настройки VS Code (личные)
+# Кэш тестирования
+.pytest_cache/
+tests/results/
+
+# Настройки редакторов
 .vscode/
 
-# Переменные окружения (секреты)
+# Переменные окружения и секреты
 .env
+.env.*
 
-# Generated reports
+# Сгенерированные отчёты
 report.json
 last_success.json
-.pytest_cache/
+# macOS
+.DS_Store

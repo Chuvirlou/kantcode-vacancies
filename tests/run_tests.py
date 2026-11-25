@@ -7,31 +7,85 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from llm_analyzer import call_llm
+from app.ai_check import analyze
+from normalizer import normalize_vacancy
 
 TESTS_PATH = Path(__file__).parent / "test_cases.json"
 RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_PATH = RESULTS_DIR / "latest.json"
 
 
+def normalize_text(text):
+    """Нормализует текст для сравнения цитат."""
+    return " ".join(
+        str(text).casefold().replace("ё", "е").split()
+    )
+def split_quotes(issue):
+    """
+    Разделяет цитаты:
+    - обычное замечание: одна цитата;
+    - противоречие: две цитаты через /.
+    """
+    quote = issue.get("quote", "")
+
+    if issue.get("topic") == (
+        "Противоречия между полями или между полем и текстом вакансии"
+    ):
+        return [
+            part.strip()
+            for part in quote.split("/")
+            if part.strip()
+        ]
+
+    return [quote.strip()] if quote.strip() else []
+
+
+def quote_exists(quote, vacancy_raw):
+    """
+    Проверяет, присутствует ли цитата
+    в исходных текстовых значениях вакансии.
+    """
+    normalized_quote = normalize_text(quote)
+
+    if not normalized_quote:
+        return False
+
+    def search(value):
+        if isinstance(value, dict):
+            return any(search(v) for v in value.values())
+
+        if isinstance(value, list):
+            return any(search(v) for v in value)
+
+        if isinstance(value, (str, int, float)):
+            return normalized_quote in normalize_text(value)
+
+        return False
+
+    return search(vacancy_raw)
+
 def run_test(test):
-    vacancy = test["vacancy"]
+    vacancy_raw = test["vacancy"]
+    vacancy = normalize_vacancy(vacancy_raw)
     expected = test["expected"]
 
-    # Запускаем именно наш анализатор с актуальным промтом
-    issues = call_llm(vacancy)
+    # Запускаем ИИ-анализатор
+    issues = analyze(vacancy)
 
-    themes = [issue.get("theme") for issue in issues]
+    # Проверяем найденные темы
+    themes = [issue.get("topic") for issue in issues]
 
     # Проверяем обязательные категории
     missing = [
-        theme for theme in expected.get("must_find", [])
+        theme
+        for theme in expected.get("must_find", [])
         if theme not in themes
     ]
 
     # Проверяем запрещённые категории
     unexpected = [
-        theme for theme in expected.get("must_not_find", [])
+        theme
+        for theme in expected.get("must_not_find", [])
         if theme in themes
     ]
 
@@ -41,15 +95,40 @@ def run_test(test):
         and len(issues) != 0
     )
 
-    # Проверяем цитаты на соответствие исходным данным
-    vacancy_text = json.dumps(vacancy, ensure_ascii=False)
+    # Проверяем каждую цитату отдельно
+    invalid_quotes = []
 
-    invalid_quotes = [
-        issue.get("quote", "")
-        for issue in issues
-        if issue.get("quote", "") not in vacancy_text
-    ]
+    for issue in issues:
+        quotes = split_quotes(issue)
 
+        # У противоречия обязательно должно быть две цитаты
+        is_contradiction = (
+            issue.get("topic") ==
+            "Противоречия между полями или между полем и текстом вакансии"
+        )
+
+        if is_contradiction and len(quotes) != 2:
+            invalid_quotes.append({
+                "quote": issue.get("quote", ""),
+                "reason": "Для противоречия нужны ровно две цитаты"
+            })
+            continue
+
+        if not quotes:
+            invalid_quotes.append({
+                "quote": issue.get("quote", ""),
+                "reason": "Пустая цитата"
+            })
+            continue
+
+        for quote in quotes:
+            if not quote_exists(quote, vacancy_raw):
+                invalid_quotes.append({
+                    "quote": quote,
+                    "reason": "Цитата отсутствует в исходных данных"
+                })
+
+    # Итоговый результат теста
     passed = (
         not missing
         and not unexpected
@@ -71,6 +150,10 @@ def run_test(test):
     }
 
 
+
+
+
+
 def main():
     with open(TESTS_PATH, encoding="utf-8") as f:
         tests = json.load(f)
@@ -88,11 +171,13 @@ def main():
             print(f"Результат: {status}")
 
             if not result["passed"]:
-                print(json.dumps(
-                    result["checks"],
-                    ensure_ascii=False,
-                    indent=2
-                ))
+                print(
+                    json.dumps(
+                        result["checks"],
+                        ensure_ascii=False,
+                        indent=2
+                    )
+                )
 
         except Exception as e:
             results.append({
@@ -104,6 +189,7 @@ def main():
 
             print(f"Ошибка: {e}")
 
+    # Подсчёт результатов
     passed = sum(r["passed"] for r in results)
     total = len(results)
 
@@ -114,10 +200,16 @@ def main():
         "results": results
     }
 
+    # Сохранение отчёта
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     with open(RESULTS_PATH, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+        json.dump(
+            report,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
     print("\n" + "=" * 40)
     print(f"Пройдено: {passed}/{total}")

@@ -1,46 +1,137 @@
+
 name: Run Vacancy Bot
 
 on:
   schedule:
-    # Запуск каждый день в 03:00 UTC (06:00 по Калининграду)
-    - cron: '0 3 * * *'
+    # Ежедневно в 04:17 UTC (06:17 по Калининграду)
+    - cron: '17 4 * * *'
   workflow_dispatch:
-    # Позволяет запускать вручную через кнопку в GitHub
 
+# Минимально необходимые права
 permissions:
-  contents: write # Нужно для автоматического коммита report.json
+  contents: read
+
+# Не допускаем одновременный запуск нескольких экземпляров бота
+concurrency:
+  group: vacancy-bot
+  cancel-in-progress: false
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
+      # 1. Получаем исходный код проекта
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Восстанавливаем предыдущие отчёты
+      - name: Restore previous reports
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            report.json
+            last_success.json
+          key: vacancy-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vacancy-reports-
+
+      # 3. Устанавливаем Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          cache: 'pip' # Ускоряет установку зависимостей при повторных запусках
+          cache: pip
 
-      - name: Install dependencies
+      # 4. Устанавливаем зависимости
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
-      - name: Run pipeline
+      # 5. Запускаем тесты до загрузки модели
+      - name: Run tests
+        run: |
+          python -m pytest -q
+
+      # 6. Устанавливаем Ollama
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+
+      # 7. Настраиваем каталог моделей Ollama
+      - name: Set Ollama models directory
+        run: |
+          echo "OLLAMA_MODELS=${{ github.workspace }}/.ollama-models" >> "$GITHUB_ENV"
+
+      # 8. Восстанавливаем кэш модели
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: .ollama-models
+          key: ollama-qwen2.5-7b-v1
+
+      # 9. Останавливаем системный сервис и запускаем Ollama
+      - name: Start Ollama
+        run: |
+          sudo systemctl stop ollama || true
+
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags >/dev/null; then
+              echo "Ollama is ready"
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Ollama failed to start. Logs:"
+          cat /tmp/ollama.log
+          exit 1
+
+      # 10. Загружаем модель
+      - name: Download AI model
+        run: |
+          ollama pull qwen2.5:7b
+
+      # 11. Запускаем анализ вакансий
+      - name: Run vacancy analysis
         env:
-          # API-ключи берутся из настроек репозитория (Settings -> Secrets and variables -> Actions)
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_ENABLED: "1"
+          AI_MODEL: "qwen2.5:7b"
+          OLLAMA_HOST: "http://localhost:11434"
         run: |
           python -m app run
 
-      - name: Commit and push report
-        run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "action@github.com"
-          git add report.json
-          # Коммитим только если файл изменился
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update report.json" && git push)
+      # 12. Сохраняем отчёты после успешного анализа
+      - name: Save previous reports cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            report.json
+            last_success.json
+          key: vacancy-reports-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # 13. Загружаем актуальный отчёт только при успехе
+      - name: Upload report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vacancy-report-${{ github.run_id }}
+          path: report.json
+          if-no-files-found: error
+          retention-days: 14
+
+      # 14. Сохраняем логи Ollama при ошибке
+      - name: Upload Ollama logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-logs-${{ github.run_id }}
+          path: /tmp/ollama.log
+          if-no-files-found: ignore
+          retention-days: 7
