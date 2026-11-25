@@ -22,6 +22,7 @@ def test_check_mode_on_sample(tmp_path):
         return
 
     cfg = Config()
+    cfg.ai_enabled = False
     cfg.output_path = str(tmp_path / "report.json")
     report = run_file(cfg, sample)
 
