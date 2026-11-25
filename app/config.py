@@ -24,7 +24,7 @@ class Config:
     last_success_path: str = "last_success.json"
 
     rules_enabled: bool = True
-    ai_enabled: bool = False
+    ai_enabled: bool = True
 
     ai_provider: str = "local"
     ai_model: str = ""
@@ -42,7 +42,7 @@ class Config:
         cfg.output_path = os.getenv("OUTPUT_PATH", cfg.output_path)
         cfg.last_success_path = os.getenv("LAST_SUCCESS_PATH", cfg.last_success_path)
         cfg.rules_enabled = os.getenv("RULES_ENABLED", "1") == "1"
-        cfg.ai_enabled = os.getenv("AI_ENABLED", "0") == "1"
+        cfg.ai_enabled = os.getenv("AI_ENABLED", "1") == "1"
         cfg.ai_provider = os.getenv("AI_PROVIDER", cfg.ai_provider)
         cfg.ai_model = os.getenv("AI_MODEL", cfg.ai_model)
         return cfg
